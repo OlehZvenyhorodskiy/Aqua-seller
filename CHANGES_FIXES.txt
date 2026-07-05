@@ -1,0 +1,20 @@
+Исправления в проекте AquaSeller:
+
+1. Исправлен баг профессии шахтёра:
+   - категория из конфига `shahter` раньше не распознавалась как профессия `rudy`
+   - из-за этого меню продавца показывало все предметы без проверки уровня
+   - теперь категория корректно нормализуется в `rudy`
+
+2. Добавлена поддержка явного поля `profession` в конфиге категории:
+   - fermer -> profession: fermer
+   - fishman -> profession: fishman
+   - killer -> profession: killer
+   - shahter -> profession: rudy
+
+3. Логика стала устойчивее к алиасам:
+   - shahter / miner / mining / rudy -> rudy
+   - fermer / farmer / farm -> fermer
+   - killer / hunter -> killer
+   - fishman / fisher / fish -> fishman
+
+4. После исправления предметы в GUI должны показываться только по доступному уровню профессии.

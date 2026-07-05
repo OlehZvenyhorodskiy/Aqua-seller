@@ -1,0 +1,26 @@
+# Build outputs
+target/
+
+# IDE files
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+.vscode/
+
+# Server runtime files / databases
+*.runtime.yml
+player-data.yml
+npcs.yml
+items.yml
+config.yml
+
+# Compiled Java class files
+*.class
+*.jar
+*.war
+*.ear
+
+# Agent files
+.gemini/

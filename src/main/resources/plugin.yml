@@ -1,0 +1,44 @@
+name: AquaSeller
+main: org.yarchez.aquaseller.AquaSeller
+version: '1.2.0'
+api-version: '1.20'
+depend: [Vault, PlaceholderAPI]
+softdepend: [Citizens]
+commands:
+  seller:
+    description: Открыть меню продажи или перезагрузить конфиг.
+    usage: /<command> [reload]
+    permission: aquaseller.use
+  aquaseller:
+    description: Админ-команды AquaSeller.
+    usage: /<command> give <itemId> [player]
+    permission: aquaseller.admin
+  killer:
+    description: Открыть меню охотника.
+    usage: /<command>
+    permission: aquaseller.use
+  fermer:
+    description: Открыть меню фермера.
+    usage: /<command>
+    permission: aquaseller.use
+  shahter:
+    description: Открыть меню шахтёра.
+    usage: /<command>
+    permission: aquaseller.use
+  fishman:
+    description: Открыть меню рыбака.
+    usage: /<command>
+    permission: aquaseller.use
+permissions:
+  aquaseller.use:
+    description: Позволяет использовать команды и интерфейсы AquaSeller.
+    default: true
+  aquaseller.reload:
+    description: Позволяет перезагружать конфигурацию и данные.
+    default: op
+  aquaseller.admin:
+    description: Админ-команды (/aquaseller give ...)
+    default: op
+  battlepass.premium:
+    description: БаттлПасс бонус
+    default: op
