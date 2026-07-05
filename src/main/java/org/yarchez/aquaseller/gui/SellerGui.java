@@ -973,199 +973,7 @@ public class SellerGui implements Listener {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // RUDY profession logic
-    // ---------------------------------------------------------------------
-    private void handleRudyProgressAndLevelUp(Player p, int itemLevel, int soldAmount) {
-        if (p == null || soldAmount <= 0) return;
-
-        // store progress per item level (1..4)
-        if (itemLevel < 1) itemLevel = 1;
-        if (itemLevel > 4) itemLevel = 4;
-
-        // keep legacy per-tier stats
-        plugin.data().rememberPlayerName(p.getUniqueId(), p.getName());
-        plugin.data().addRudyProgress(p.getUniqueId(), itemLevel, soldAmount);
-
-        // cumulative progress for profession leveling and UI
-        long total = plugin.data().addRudyTotalSold(p.getUniqueId(), soldAmount);
-
-        // check level-ups based on cumulative total sold in the RUDY category
-        int curLevel = plugin.data().getRudyLevel(p.getUniqueId());
-        if (curLevel == 1) {
-            long need = plugin.cfg().get().getLong("profession.rudy.to_level.2", 5000L);
-            if (total >= need) levelUpRudy(p, 2);
-        } else if (curLevel == 2) {
-            long need = plugin.cfg().get().getLong("profession.rudy.to_level.3", 10000L);
-            if (total >= need) levelUpRudy(p, 3);
-        } else if (curLevel == 3) {
-            long need = plugin.cfg().get().getLong("profession.rudy.to_level.4", 15000L);
-            if (total >= need) levelUpRudy(p, 4);
-        }
-
-        // Optional: one-time AUTO reward for reaching configured cumulative progress at level 4.
-        // This must be granted WITHOUT clicks.
-        tryGrantRudyLevel4AutoReward(p, total);
-    }
-
-    private void tryGrantRudyLevel4AutoReward(Player p, long total) {
-        if (p == null) return;
-        try {
-            if (plugin.data().getRudyLevel(p.getUniqueId()) < 4) return;
-            if (plugin.data().isRudyMaxRewardClaimed(p.getUniqueId())) return;
-
-            long need = plugin.cfg().get().getLong("profession.rudy.level4_reward.required", 20000L);
-            if (total < need) return;
-
-            // Commands are configured in:
-            // profession.rudy.level4_reward.commands
-            // Backward-compatible fallback:
-            // profession.rudy.rewards.4.cmd
-            java.util.List<String> cmds = java.util.Collections.emptyList();
-            ConfigurationSection sec = plugin.cfg().get().getConfigurationSection("profession.rudy.level4_reward");
-            if (sec != null) {
-                cmds = readStringListFlexible(sec, "commands");
-            }
-            if (cmds == null || cmds.isEmpty()) {
-                cmds = getRudyRewardCommands(4);
-            }
-
-            // If commands are configured - execute them safely.
-            // If not configured at all - still mark as claimed and just send the message.
-            if (cmds != null && !cmds.isEmpty()) {
-                if (!executeRewardActions(p, cmds)) {
-                    String m = plugin.cfg().get().getString(
-                            "messages.rudy_reward_command_failed",
-                            "&cНе удалось выдать награду. Проверьте настройки награды и попробуйте снова."
-                    );
-                    p.sendMessage(ChatColor.translateAlternateColorCodes('&', m));
-                    return;
-                }
-            }
-
-            // Mark as claimed only after successful execution.
-            plugin.data().setRudyMaxRewardClaimed(p.getUniqueId(), true);
-            // Also mark the level IV reward button as claimed (so GUI shows it as received).
-            plugin.data().setRudyRewardClaimed(p.getUniqueId(), 4, true);
-
-            // Send configured messages/broadcast (if present)
-            sendRudyMessagesOnly(p, "profession.rudy.level4_reward");
-
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private void levelUpRudy(Player p, int newLevel) {
-        int current = plugin.data().getRudyLevel(p.getUniqueId());
-        if (newLevel <= current) return;
-        plugin.data().setRudyLevel(p.getUniqueId(), newLevel);
-
-        playRudyLevelUpSound(p);
-
-        String path = "profession.rudy.level_up." + newLevel;
-        sendRudyMessageAndCommands(p, path);
-
-        // If the player currently has the RUDY menu open, refresh it immediately so new items/icons appear.
-        refreshOpenRudyMenu(p);
-    }
-
-    private void refreshOpenRudyMenu(Player p) {
-        if (p == null) return;
-        try {
-            Inventory top = p.getOpenInventory().getTopInventory();
-            InventoryHolder holder = top == null ? null : top.getHolder();
-            if (holder instanceof TagHolder th) {
-                if (th.tag != null && th.tag.equalsIgnoreCase("cat:RUDY")) {
-                    CategoryTemplate ct = categories.get("RUDY");
-                    if (ct != null) {
-                        p.openInventory(ct.buildFor(p));
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private void playRudyLevelUpSound(Player p) {
-        if (p == null) return;
-        try {
-            String name = plugin.cfg().get().getString(
-                    "profession.rudy.level_up_sound.sound",
-                    "UI_TOAST_CHALLENGE_COMPLETE" // "quest completed" style sound
-            );
-            float volume = (float) plugin.cfg().get().getDouble("profession.rudy.level_up_sound.volume", 1.0D);
-            float pitch = (float) plugin.cfg().get().getDouble("profession.rudy.level_up_sound.pitch", 1.0D);
-
-            Sound s;
-            try {
-                s = Sound.valueOf(name);
-            } catch (Exception ignored) {
-                s = Sound.UI_TOAST_CHALLENGE_COMPLETE;
-            }
-            p.playSound(p.getLocation(), s, volume, pitch);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private void sendRudyMessageAndCommands(Player p, String basePath) {
-        // player message (backward compatible with old key: .message)
-        String msg = plugin.cfg().get().getString(basePath + ".player_message", null);
-        if (msg == null) msg = plugin.cfg().get().getString(basePath + ".message", "");
-        if (msg != null && !msg.isEmpty()) {
-            msg = msg.replace("%player%", p.getName());
-            p.sendMessage(ChatColor.translateAlternateColorCodes('&', msg));
-        }
-
-        // optional broadcast message (NOT /say). This is a normal colored broadcast line.
-        boolean broadcast = plugin.cfg().get().getBoolean(basePath + ".broadcast", false);
-        if (broadcast) {
-            String bmsg = plugin.cfg().get().getString(basePath + ".broadcast_message", "");
-            if (bmsg != null && !bmsg.isEmpty()) {
-                bmsg = bmsg.replace("%player%", p.getName());
-                Bukkit.broadcastMessage(ChatColor.translateAlternateColorCodes('&', bmsg));
-            }
-        }
-
-        // IMPORTANT: Level-up rewards must NOT be executed automatically.
-        // Any rewards (commands/items) should be granted ONLY after clicking the
-        // reward slots in the RUDY GUI (25/34/43).
-        // Therefore, for profession level-up paths we ignore the `.commands` section.
-        if (basePath != null && basePath.startsWith("profession.rudy.level_up.")) {
-            return;
-        }
-
-        // commands (console)
-        List<String> cmds = plugin.cfg().get().getStringList(basePath + ".commands");
-        if (cmds != null) {
-            for (String c : cmds) {
-                if (c == null || c.trim().isEmpty()) continue;
-                String cmd = c.replace("%player%", p.getName());
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
-            }
-        }
-    }
-
-    private void sendRudyMessagesOnly(Player p, String basePath) {
-        if (p == null || basePath == null) return;
-        try {
-            String msg = plugin.cfg().get().getString(basePath + ".player_message", null);
-            if (msg == null) msg = plugin.cfg().get().getString(basePath + ".message", "");
-            if (msg != null && !msg.isEmpty()) {
-                msg = msg.replace("%player%", p.getName());
-                p.sendMessage(ChatColor.translateAlternateColorCodes('&', msg));
-            }
-
-            boolean broadcast = plugin.cfg().get().getBoolean(basePath + ".broadcast", false);
-            if (broadcast) {
-                String bmsg = plugin.cfg().get().getString(basePath + ".broadcast_message", "");
-                if (bmsg != null && !bmsg.isEmpty()) {
-                    bmsg = bmsg.replace("%player%", p.getName());
-                    Bukkit.broadcastMessage(ChatColor.translateAlternateColorCodes('&', bmsg));
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-    }
+    // Legacy Rudy progress methods removed as progression is unified in handleProfessionProgressAndLevelUp.
 
     // ---------------------------------------------------------------------
     // RUDY reward buttons (GUI)
@@ -1711,7 +1519,7 @@ private boolean executeRewardActions(Player p, java.util.List<String> cmds) {
         refreshOpenProfessionMenu(profession, p);
     }
 
-    private void refreshOpenProfessionMenu(String profession, Player p) {
+    public void refreshOpenProfessionMenu(String profession, Player p) {
         if (p == null || profession == null) return;
         try {
             Inventory top = p.getOpenInventory().getTopInventory();
@@ -1719,7 +1527,7 @@ private boolean executeRewardActions(Player p, java.util.List<String> cmds) {
             if (holder instanceof TagHolder th && th.tag != null) {
                 String wanted = switch (profession) { case "rudy" -> "cat:RUDY"; case "fermer" -> "cat:fermer"; case "killer" -> "cat:KILLER"; case "fishman" -> "cat:FISHMAN"; default -> null; };
                 if (wanted != null && th.tag.equalsIgnoreCase(wanted)) {
-                    String categoryId = wanted.substring(4);
+                    String categoryId = wanted.substring(4).toLowerCase(Locale.ROOT);
                     CategoryTemplate ct = categories.get(categoryId);
                     if (ct != null) p.openInventory(ct.buildFor(p));
                 }

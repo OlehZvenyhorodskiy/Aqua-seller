@@ -9,10 +9,15 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockGrowEvent;
+import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.AnvilInventory;
 import org.bukkit.inventory.GrindstoneInventory;
 import org.bukkit.inventory.ItemStack;
@@ -31,10 +36,14 @@ public class CropAcceleratorListener implements Listener {
 
     private final AquaSeller plugin;
     private final ItemsManager items;
+    private final java.util.Map<java.util.UUID, ItemsManager.AcceleratorStats> playerAccelerators = new java.util.concurrent.ConcurrentHashMap<>();
 
     public CropAcceleratorListener(AquaSeller plugin) {
         this.plugin = plugin;
         this.items = plugin.items();
+        for (Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
+            updatePlayerAccelerator(p);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -179,13 +188,61 @@ public class CropAcceleratorListener implements Listener {
         plugin.getServer().getScheduler().runTask(plugin, () -> applyExtraGrowth(block, best.growthBonus));
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerJoin(PlayerJoinEvent e) {
+        updatePlayerAccelerator(e.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerQuit(PlayerQuitEvent e) {
+        playerAccelerators.remove(e.getPlayer().getUniqueId());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onInventoryClick(InventoryClickEvent e) {
+        if (e.getWhoClicked() instanceof Player p) {
+            updatePlayerAcceleratorLater(p);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerDropItem(PlayerDropItemEvent e) {
+        updatePlayerAcceleratorLater(e.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onEntityPickupItem(EntityPickupItemEvent e) {
+        if (e.getEntity() instanceof Player p) {
+            updatePlayerAcceleratorLater(p);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerSwapHandItems(PlayerSwapHandItemsEvent e) {
+        updatePlayerAcceleratorLater(e.getPlayer());
+    }
+
+    private void updatePlayerAcceleratorLater(Player p) {
+        if (p == null) return;
+        plugin.getServer().getScheduler().runTask(plugin, () -> updatePlayerAccelerator(p));
+    }
+
+    private void updatePlayerAccelerator(Player p) {
+        if (p == null) return;
+        ItemsManager.AcceleratorStats st = getBestFromInventory(p);
+        if (st != null) {
+            playerAccelerators.put(p.getUniqueId(), st);
+        } else {
+            playerAccelerators.remove(p.getUniqueId());
+        }
+    }
+
     private ItemsManager.AcceleratorStats getBestAccelerator(Block block) {
         ItemsManager.AcceleratorStats best = null;
         for (Player player : block.getWorld().getPlayers()) {
-            double distSq = player.getLocation().distanceSquared(block.getLocation().add(0.5, 0.5, 0.5));
-            if (distSq > 15 * 15) continue;
-            ItemsManager.AcceleratorStats st = getBestFromInventory(player);
+            ItemsManager.AcceleratorStats st = playerAccelerators.get(player.getUniqueId());
             if (st == null) continue;
+            double distSq = player.getLocation().distanceSquared(block.getLocation().add(0.5, 0.5, 0.5));
             if (distSq > (double) st.radius * st.radius) continue;
             if (best == null || st.level > best.level) best = st;
         }

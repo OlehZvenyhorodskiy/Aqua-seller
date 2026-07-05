@@ -23,6 +23,8 @@ public class AquaSellerAdminCommand implements TabExecutor {
             case "top" -> handleTop(sender, label, args);
             case "progress" -> handleProgress(sender, label, args);
             case "setnpcplase", "setnpcplace" -> handleSetNpcPlace(sender, label, args);
+            case "setlevel" -> handleSetLevel(sender, label, args);
+            case "addprogress" -> handleAddProgress(sender, label, args);
             default -> { sendHelp(sender, label); yield true; }
         };
     }
@@ -106,6 +108,139 @@ public class AquaSellerAdminCommand implements TabExecutor {
         sender.sendMessage("§f/" + label + " top <rudy|fermer|killer|fishman|topseller>");
         sender.sendMessage("§f/" + label + " progress <rudy|fermer|killer|fishman> [player]");
         sender.sendMessage("§f/" + label + " setnpcplase <mining|fermer|killer|fisher|topseller>");
+        boolean admin = (sender instanceof ConsoleCommandSender) || sender.isOp() || sender.hasPermission("aquaseller.admin");
+        if (admin) {
+            sender.sendMessage("§f/" + label + " setlevel <player> <rudy|fermer|killer|fishman> <level>");
+            sender.sendMessage("§f/" + label + " addprogress <player> <rudy|fermer|killer|fishman> <amount>");
+        }
+    }
+
+    private boolean handleSetLevel(CommandSender sender, String label, String[] args) {
+        boolean allowed = (sender instanceof ConsoleCommandSender) || sender.isOp() || sender.hasPermission("aquaseller.admin");
+        if (!allowed) { sender.sendMessage("§cНет прав."); return true; }
+        if (args.length < 4) { sender.sendMessage("§cИспользование: /" + label + " setlevel <player> <profession> <level>"); return true; }
+        
+        OfflinePlayer target = Bukkit.getPlayerExact(args[1]);
+        if (target == null) target = Bukkit.getOfflinePlayer(args[1]);
+        if (!target.hasPlayedBefore() && !target.isOnline()) { sender.sendMessage("§cИгрок никогда не играл на сервере."); return true; }
+        
+        String profession = resolveProfession(args[2]);
+        if (profession == null) { sender.sendMessage("§cНеверная профессия. Доступные: rudy, fermer, killer, fishman"); return true; }
+        
+        int level;
+        try {
+            level = Integer.parseInt(args[3]);
+        } catch (NumberFormatException e) {
+            sender.sendMessage("§cУровень должен быть числом от 1 до 4.");
+            return true;
+        }
+        
+        if (level < 1 || level > 4) {
+            sender.sendMessage("§cУровень должен быть от 1 до 4.");
+            return true;
+        }
+        
+        plugin.data().setProfessionLevel(profession, target.getUniqueId(), level);
+        sender.sendMessage("§aИгроку §e" + target.getName() + " §aустановлен уровень §6" + roman(level) + " §aдля профессии §e" + nice(profession));
+        
+        if (target.isOnline()) {
+            Player p = target.getPlayer();
+            if (p != null) {
+                p.sendMessage("§aВам установлен уровень §6" + roman(level) + " §aдля профессии §e" + nice(profession));
+                try {
+                    plugin.sellerGui().refreshOpenProfessionMenu(profession, p);
+                } catch (Throwable ignored) {}
+            }
+        }
+        return true;
+    }
+
+    private boolean handleAddProgress(CommandSender sender, String label, String[] args) {
+        boolean allowed = (sender instanceof ConsoleCommandSender) || sender.isOp() || sender.hasPermission("aquaseller.admin");
+        if (!allowed) { sender.sendMessage("§cНет прав."); return true; }
+        if (args.length < 4) { sender.sendMessage("§cИспользование: /" + label + " addprogress <player> <profession> <amount>"); return true; }
+        
+        OfflinePlayer target = Bukkit.getPlayerExact(args[1]);
+        if (target == null) target = Bukkit.getOfflinePlayer(args[1]);
+        if (!target.hasPlayedBefore() && !target.isOnline()) { sender.sendMessage("§cИгрок никогда не играл на сервере."); return true; }
+        
+        String profession = resolveProfession(args[2]);
+        if (profession == null) { sender.sendMessage("§cНеверная профессия. Доступные: rudy, fermer, killer, fishman"); return true; }
+        
+        long amount;
+        try {
+            amount = Long.parseLong(args[3]);
+        } catch (NumberFormatException e) {
+            sender.sendMessage("§cКоличество должно быть числом.");
+            return true;
+        }
+        
+        if (amount < 0) {
+            sender.sendMessage("§cКоличество должно быть положительным числом.");
+            return true;
+        }
+        
+        UUID uuid = target.getUniqueId();
+        int curLevel = plugin.data().getProfessionLevel(profession, uuid);
+        
+        // Add progress per current tier
+        plugin.data().addProfessionProgress(profession, uuid, curLevel, amount);
+        
+        // Add progress to total_sold
+        long total = plugin.data().addProfessionTotalSold(profession, uuid, amount);
+        
+        sender.sendMessage("§aДобавлено §e" + amount + " §aпрогресса игроку §e" + target.getName() + " §aв профессию §e" + nice(profession) + "§a. Текущий прогресс: §6" + total);
+        
+        // Check for level ups
+        int newLevel = curLevel;
+        if (curLevel == 1) {
+            long need = plugin.cfg().get().getLong("profession." + (profession.equals("rudy") ? "rudy" : profession) + ".to_level.2", 5000L);
+            if (total >= need) newLevel = 2;
+        }
+        if (curLevel <= 2 && newLevel >= 2) {
+            long need = plugin.cfg().get().getLong("profession." + (profession.equals("rudy") ? "rudy" : profession) + ".to_level.3", 15000L);
+            if (total >= need) newLevel = 3;
+        }
+        if (curLevel <= 3 && newLevel >= 3) {
+            long need = plugin.cfg().get().getLong("profession." + (profession.equals("rudy") ? "rudy" : profession) + ".to_level.4", 30000L);
+            if (total >= need) newLevel = 4;
+        }
+        
+        if (newLevel > curLevel) {
+            plugin.data().setProfessionLevel(profession, uuid, newLevel);
+            if (target.isOnline()) {
+                Player p = target.getPlayer();
+                if (p != null) {
+                    p.sendMessage(ChatColor.translateAlternateColorCodes('&', 
+                        plugin.cfg().get().getString("profession." + (profession.equals("rudy") ? "rudy" : profession) + ".level_up." + newLevel + ".player_message", 
+                        "&aВы прокачали профессию &6" + nice(profession) + "&a до уровня &6" + roman(newLevel) + "&a!")));
+                    try {
+                        String sName = plugin.cfg().get().getString("profession." + (profession.equals("rudy") ? "rudy" : profession) + ".level_up_sound.sound", "UI_TOAST_CHALLENGE_COMPLETE");
+                        p.playSound(p.getLocation(), org.bukkit.Sound.valueOf(sName), 1.0f, 1.0f);
+                    } catch (Throwable ignored) {}
+                }
+            }
+        }
+        
+        if (target.isOnline()) {
+            Player p = target.getPlayer();
+            if (p != null) {
+                try {
+                    plugin.sellerGui().refreshOpenProfessionMenu(profession, p);
+                } catch (Throwable ignored) {}
+            }
+        }
+        return true;
+    }
+
+    private String resolveProfession(String raw) {
+        if (raw == null) return null;
+        String s = raw.toLowerCase(Locale.ROOT).trim();
+        if (s.equals("rudy") || s.equals("shahter") || s.equals("miner") || s.equals("mining")) return "rudy";
+        if (s.equals("fermer") || s.equals("farmer") || s.equals("farm")) return "fermer";
+        if (s.equals("killer") || s.equals("hunter")) return "killer";
+        if (s.equals("fishman") || s.equals("fisher") || s.equals("fish") || s.equals("fishing")) return "fishman";
+        return null;
     }
 
     @Override
@@ -114,16 +249,18 @@ public class AquaSellerAdminCommand implements TabExecutor {
         boolean admin = (sender instanceof ConsoleCommandSender) || sender.isOp() || sender.hasPermission("aquaseller.admin");
         if (args.length == 1) {
             List<String> list = new ArrayList<>(Arrays.asList("top", "progress"));
-            if (admin) { list.add("give"); list.add("setnpcplase"); }
+            if (admin) { list.add("give"); list.add("setnpcplase"); list.add("setlevel"); list.add("addprogress"); }
             return prefix(list, args[0]);
         }
         if (args.length == 2) {
             if (args[0].equalsIgnoreCase("give")) return admin ? prefix(new ArrayList<>(plugin.items().itemIds()), args[1]) : Collections.emptyList();
             if (args[0].equalsIgnoreCase("top") || args[0].equalsIgnoreCase("progress")) return prefix(Arrays.asList("rudy","fermer","killer","fishman","fisher","topseller"), args[1]);
             if (args[0].equalsIgnoreCase("setnpcplase") || args[0].equalsIgnoreCase("setnpcplace")) return admin ? prefix(Arrays.asList("mining","fermer","killer","fisher","topseller"), args[1]) : Collections.emptyList();
+            if (args[0].equalsIgnoreCase("setlevel") || args[0].equalsIgnoreCase("addprogress")) return admin ? onlineNames(args[1]) : Collections.emptyList();
         }
         if (args.length == 3) {
             if (args[0].equalsIgnoreCase("give") || args[0].equalsIgnoreCase("progress")) return admin ? onlineNames(args[2]) : Collections.emptyList();
+            if (args[0].equalsIgnoreCase("setlevel") || args[0].equalsIgnoreCase("addprogress")) return admin ? prefix(Arrays.asList("rudy","fermer","killer","fishman"), args[2]) : Collections.emptyList();
         }
         return Collections.emptyList();
     }

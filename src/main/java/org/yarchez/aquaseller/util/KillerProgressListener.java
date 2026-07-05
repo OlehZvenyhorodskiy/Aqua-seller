@@ -108,7 +108,10 @@ public class KillerProgressListener implements Listener {
         playLevelUpSound(p);
         sendMessagesOnly(p, "profession.killer.level_up." + newLevel);
         try {
-            if (plugin.sellerGui() != null) plugin.sellerGui().reload();
+            if (plugin.sellerGui() != null) {
+                plugin.sellerGui().reload();
+                plugin.sellerGui().refreshOpenProfessionMenu("killer", p);
+            }
         } catch (Throwable ignored) {}
     }
 

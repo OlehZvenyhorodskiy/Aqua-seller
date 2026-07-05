@@ -49,6 +49,7 @@ public class DataStore {
     private static final String FERMER_TOTAL_SOLD = "total_sold";
 
     private final AquaSeller plugin;
+    private final Object ioLock = new Object();
     private File file;
     private FileConfiguration cfg;
 
@@ -179,9 +180,21 @@ public class DataStore {
 
     private void save() {
         try {
-            cfg.save(file);
-        } catch (IOException e) {
-            plugin.getLogger().warning("Could not save " + file.getName() + ": " + e.getMessage());
+            String yamlString;
+            synchronized (ioLock) {
+                yamlString = cfg.saveToString();
+            }
+            org.bukkit.Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                synchronized (ioLock) {
+                    try {
+                        java.nio.file.Files.writeString(file.toPath(), yamlString, java.nio.charset.StandardCharsets.UTF_8);
+                    } catch (IOException e) {
+                        plugin.getLogger().warning("Could not save " + file.getName() + ": " + e.getMessage());
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            plugin.getLogger().severe("Error preparing data save: " + t.getMessage());
         }
     }
 
@@ -249,51 +262,11 @@ public class DataStore {
 
     // Cumulative counter (used for profession leveling)
     public long getRudyTotalSold(UUID uuid) {
-        String base = SHAHTER_PATH + "." + uuid.toString() + ".";
-        String path = base + SHAHTER_TOTAL_SOLD;
-        long progressSum = 0L;
-        for (int i = 1; i <= 4; i++) {
-            progressSum += cfg.getLong(base + "progress." + i, 0L);
-        }
-        long stored = cfg.getLong(path, 0L);
-        // Self-heal: total_sold must match the sum of per-tier progress.
-        // Older buggy builds could leave total_sold higher than the real sold amount.
-        if (progressSum > 0L && stored != progressSum) {
-            cfg.set(path, progressSum);
-            save();
-            return progressSum;
-        }
-        if (cfg.contains(path)) {
-            return stored;
-        }
-        if (progressSum > 0L) {
-            cfg.set(path, progressSum);
-            save();
-        }
-        return progressSum;
+        return getProfessionTotalSold("shahter", uuid);
     }
 
     public long addRudyTotalSold(UUID uuid, long amount) {
-        String path = SHAHTER_PATH + "." + uuid.toString() + "." + SHAHTER_TOTAL_SOLD;
-        long current;
-        if (cfg.contains(path)) {
-            current = cfg.getLong(path, 0L);
-        } else {
-            // Migration-safe path: when old builds only had progress.<tier>, callers may already
-            // have updated progress for the current sale before they update total_sold.
-            // Subtract the current increment once to avoid counting the same sale twice.
-            current = 0L;
-            String base = SHAHTER_PATH + "." + uuid.toString() + ".progress.";
-            for (int i = 1; i <= 4; i++) {
-                current += cfg.getLong(base + i, 0L);
-            }
-            current -= amount;
-            if (current < 0L) current = 0L;
-        }
-        long newValue = current + amount;
-        cfg.set(path, newValue);
-        save();
-        return newValue;
+        return addProfessionTotalSold("shahter", uuid, amount);
     }
 
     public boolean isRudyMaxRewardClaimed(UUID uuid) {
@@ -342,48 +315,11 @@ public class DataStore {
     }
 
     public long getFermerTotalSold(UUID uuid) {
-        String base = FERMER_PATH + "." + uuid.toString() + ".";
-        String path = base + FERMER_TOTAL_SOLD;
-        long progressSum = 0L;
-        for (int i = 1; i <= 4; i++) {
-            progressSum += cfg.getLong(base + "progress." + i, 0L);
-        }
-        long stored = cfg.getLong(path, 0L);
-        if (progressSum > 0L && stored != progressSum) {
-            cfg.set(path, progressSum);
-            save();
-            return progressSum;
-        }
-        if (cfg.contains(path)) {
-            return stored;
-        }
-        if (progressSum > 0L) {
-            cfg.set(path, progressSum);
-            save();
-        }
-        return progressSum;
+        return getProfessionTotalSold("fermer", uuid);
     }
-
+ 
     public long addFermerTotalSold(UUID uuid, long amount) {
-        String path = FERMER_PATH + "." + uuid.toString() + "." + FERMER_TOTAL_SOLD;
-        long current;
-        if (cfg.contains(path)) {
-            current = cfg.getLong(path, 0L);
-        } else {
-            // Same migration-safe logic as Rudy: do not double count the very first sale
-            // when legacy progress was updated before total_sold is written.
-            current = 0L;
-            String base = FERMER_PATH + "." + uuid.toString() + ".progress.";
-            for (int i = 1; i <= 4; i++) {
-                current += cfg.getLong(base + i, 0L);
-            }
-            current -= amount;
-            if (current < 0L) current = 0L;
-        }
-        long newValue = current + amount;
-        cfg.set(path, newValue);
-        save();
-        return newValue;
+        return addProfessionTotalSold("fermer", uuid, amount);
     }
 
     public boolean isFermerMaxRewardClaimed(UUID uuid) {
@@ -502,16 +438,12 @@ public class DataStore {
             progressSum += cfg.getLong(base + "progress." + i, 0L);
         }
         long stored = cfg.getLong(path, 0L);
-        if (progressSum > 0L && stored != progressSum) {
+        if (stored <= 0L && progressSum > 0L) {
             cfg.set(path, progressSum);
             save();
             return progressSum;
         }
         if (cfg.contains(path)) return stored;
-        if (progressSum > 0L) {
-            cfg.set(path, progressSum);
-            save();
-        }
         return progressSum;
     }
 
